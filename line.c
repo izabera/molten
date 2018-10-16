@@ -70,10 +70,51 @@ void quit(int sig) {
 }
 
 
+static void ctrl(char c) {
+  switch (CTRL(c)) {
+    case CTRL('C'):
+      quit(0);
+      break;
+    case CTRL('J'):
+    case CTRL('M'):
+      printf("\r\n");
+      ctrl('U');
+      break;
+    case CTRL('?'):
+    case CTRL('H'):
+      if (buffer.pos) {
+        buffer.pos--;
+        needtodelete = 1;
+      }
+      break;
+    case CTRL('U'):
+      buffer.pos = 0;
+      needtodelete = 1;
+      break;
+    case CTRL('W'):
+  }
+}
+
+
 int main() {
   tcgetattr(0, &oldterm);
   cfmakeraw(&newterm);
   tcsetattr(0, TCSANOW, &newterm);
+
+  {
+    struct rgb { int r, g, b; } fg, bg;
+    char buf[50] = { };
+
+    printf("\e]11;?\e\\");
+    fflush(stdout);
+    read(0, buf, sizeof buf);
+    sscanf(buf, "\e]11;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
+
+    printf("\e]10;?\e\\");
+    fflush(stdout);
+    read(0, buf, sizeof buf);
+    sscanf(buf, "\e]11;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
+  }
 
 
   setvbuf(stdout, NULL, _IOFBF, 0); // stupid libc, let me handle this
@@ -121,9 +162,11 @@ int main() {
     if (FD_ISSET(0, &fds)) {
       char c;
       read(0, &c, 1);
-      if (isalnum(c) || c == ' ') pushchar(c);
-      else if (c == '\b' || c == '\177') backspace();
-      else if (c == '\n' || c == '\r' || c == '\3') quit(0);
+      if (!isascii(c)) { /* yeah not for now sorry */ }
+      else {
+        if (iscntrl(c)) ctrl(c);
+        else pushchar(c);
+      }
     }
     if (FD_ISSET(sigfd, &fds)) {
       struct signalfd_siginfo si;
