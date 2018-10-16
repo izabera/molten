@@ -121,7 +121,7 @@ int main() {
     print("\e]10;?\e\\");
     fflush(target);
     read(0, buf, sizeof buf);
-    sscanf(buf, "\e]11;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
+    sscanf(buf, "\e]10;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
   }
 
 
