@@ -1,3 +1,5 @@
+#include <arpa/inet.h>
+#include <pthread.h>
 #include <ctype.h>
 #include <signal.h>
 #include <stdio.h>
@@ -20,7 +22,10 @@ static struct {
 } buffer;
 
 
-static void pushchar(char c) { if (buffer.pos < sizeof buffer.data - 1) buffer.data[buffer.pos++] = c; }
+static void pushchar(char c) {
+  if (buffer.pos < sizeof buffer.data - 1)
+    buffer.data[buffer.pos++] = c;
+}
 
 
 static struct winsize w;
@@ -43,18 +48,20 @@ static int display_line(void) {
   return down;
 }
 
-void display_cursor(unsigned long exp) {
-  static unsigned long color, direction = -1;
+struct rgb { int r, g, b; } fg, bg, direction;
+void display_cursor(int exp) {
+  static struct rgb color;
+  static int direction = -1;
 
-  print("\e[48;2;%d;0;0m \e[m", color);
+  print("\e[48;2;%d;%d;%dm \e[m", color.r, color.g, color.b);
   print("\e[K\e[J");
 
-  if (color <= 0 || color >= 255)
+  if (color.r <= 0 || color.r >= 255)
     direction *= -1;
-  color += direction * exp * 5;
+  color.r += direction * exp * 5;
 }
 
-void display(unsigned long exp) {
+void display(int exp) {
   int down = display_line();
 
   display_cursor(exp);
@@ -74,6 +81,61 @@ void quit(int sig) {
   fwrite(buffer.data, 1, buffer.pos, stdout);
   printf("\n");
   exit(sig ? 128+sig : 0);
+}
+
+
+
+struct dictionary {
+  int maxlen;
+  struct {
+    char **words;
+    size_t nwords;
+  } lists[];
+} *dictionary;
+
+void *get_dictionary(void *_) {
+  FILE *dict = fopen("/usr/share/dict/words", "r");
+  if (!dict) return 0;
+
+  char *line = 0;
+  size_t linesize = 0;
+  ssize_t ret;
+
+  int maxlen = 0;
+  struct dictionary *loaded = 0;
+
+  while ((ret = getline(&line, &linesize, dict)) > 0) {
+    line[--ret] = 0;
+    if (strcspn(line, "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != ret) {
+      if (ret > maxlen) {
+        loaded = realloc(loaded, sizeof *loaded + sizeof *(loaded->lists) * ret);
+        memset(loaded->lists + maxlen, 0, sizeof *(loaded->lists) * (ret - maxlen));
+        maxlen = ret;
+      }
+#define LIST loaded->lists[ret-1]
+#define WORDS LIST.words
+      WORDS = realloc(WORDS, ++(LIST.nwords) * sizeof(char *));
+      WORDS[LIST.nwords-1] = strdup(line);
+    }
+  }
+  free(line);
+
+  loaded->maxlen = maxlen;
+  dictionary = loaded;
+
+  return 0;
+}
+
+
+void tabcomplete(void) {
+  if (!dictionary) return;
+  /*if (!buffer.pos) return;*/
+
+  /*char *word = buffer.data + buffer.pos - 1;*/
+  /*while (word > buffer.pos && *word != ' ') word--;*/
+
+  /*char *completion = bsearch(word, completions, ncompletions, sizeof(char *), compare);*/
+  /*if (!completion) puts("sad");*/
 }
 
 
@@ -98,6 +160,9 @@ static void ctrl(char c) {
     case CTRL('W'):
       while (buffer.pos && buffer.data[buffer.pos-1] == ' ') buffer.pos--;
       while (buffer.pos && buffer.data[buffer.pos-1] != ' ') buffer.pos--;
+    /*case CTRL('R'):*/
+    case CTRL('I'):
+      tabcomplete();
   }
 }
 
@@ -105,12 +170,15 @@ static void ctrl(char c) {
 int main() {
   target = stderr;
 
+  pthread_t t;
+  pthread_create(&t, 0, get_dictionary, 0);
+
   tcgetattr(0, &oldterm);
   cfmakeraw(&newterm);
   tcsetattr(0, TCSANOW, &newterm);
 
   {
-    struct rgb { int r, g, b; } fg, bg;
+    struct rgb fg, bg;
     char buf[50] = { };
 
     print("\e]11;?\e\\");
@@ -184,7 +252,7 @@ int main() {
     if (FD_ISSET(timerfd, &fds)) {
       unsigned long exp;
       read(timerfd, &exp, sizeof exp);
-      display(exp);
+      display((int)exp);
     }
   }
 }
