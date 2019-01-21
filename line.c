@@ -48,17 +48,31 @@ static int display_line(void) {
   return down;
 }
 
-struct rgb { int r, g, b; } fg, bg, direction;
+struct rgb { int r, g, b; } fg, bg, color;
 void display_cursor(int exp) {
-  static struct rgb color;
   static int direction = -1;
+  static int count;
+
+#define steps 50
+
+  if ((count + exp) / steps > count / steps)
+    direction *= -1;
+  count += exp;
 
   print("\e[48;2;%d;%d;%dm \e[m", color.r, color.g, color.b);
   print("\e[K\e[J");
 
-  if (color.r <= 0 || color.r >= 255)
-    direction *= -1;
-  color.r += direction * exp * 5;
+  if (direction == 1) {
+    color.r =          (count % steps)  * (fg.r - bg.r) / steps + bg.r;
+    color.g =          (count % steps)  * (fg.g - bg.g) / steps + bg.g;
+    color.b =          (count % steps)  * (fg.b - bg.b) / steps + bg.b;
+  }
+  else {
+    color.r = (steps - (count % steps)) * (fg.r - bg.r) / steps + bg.r;
+    color.g = (steps - (count % steps)) * (fg.g - bg.g) / steps + bg.g;
+    color.b = (steps - (count % steps)) * (fg.b - bg.b) / steps + bg.b;
+  }
+
 }
 
 void display(int exp) {
@@ -178,18 +192,19 @@ int main() {
   tcsetattr(0, TCSANOW, &newterm);
 
   {
-    struct rgb fg, bg;
     char buf[50] = { };
 
     print("\e]11;?\e\\");
     fflush(target);
     read(0, buf, sizeof buf);
-    sscanf(buf, "\e]11;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
+    sscanf(buf, "\e]11;rgb:%2x%*x/%2x%*x/%2x%*x", &bg.r, &bg.g, &bg.b);
 
     print("\e]10;?\e\\");
     fflush(target);
     read(0, buf, sizeof buf);
-    sscanf(buf, "\e]10;rgb:%o/%o/%o", &fg.r, &fg.g, &fg.b);
+    sscanf(buf, "\e]10;rgb:%2x%*x/%2x%*x/%2x%*x", &fg.r, &fg.g, &fg.b);
+
+    color = fg;
   }
 
 
