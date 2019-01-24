@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
-#include <pthread.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/signalfd.h>
+#include <sys/stat.h>
 #include <sys/timerfd.h>
 #include <termios.h>
 #include <unistd.h>
@@ -100,49 +102,46 @@ void quit(int sig) {
 
 
 struct dictionary {
-  int maxlen;
-  struct {
-    char **words;
-    size_t nwords;
-  } lists[];
-} *dictionary;
+  long count;
+  char *dict;
+  char **words;
+} dictionary;
 
-void *get_dictionary(void *_) {
-  FILE *dict = fopen("/usr/share/dict/words", "r");
-  if (!dict) return 0;
+void *get_dictionary(void *source) {
+  int fd = open(source, O_RDONLY);
 
-  char *line = 0;
-  size_t linesize = 0;
-  ssize_t ret;
+  struct stat st = { 0 };
+  fstat(fd, &st);
 
-  int maxlen = 0;
-  struct dictionary *loaded = 0;
+  char *dict = malloc(st.st_size);
+  char *p = dict;
 
-  while ((ret = getline(&line, &linesize, dict)) > 0) {
-    line[--ret] = 0;
-    if (strcspn(line, "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != ret) {
-      if (ret > maxlen) {
-        loaded = realloc(loaded, sizeof *loaded + sizeof *(loaded->lists) * ret);
-        memset(loaded->lists + maxlen, 0, sizeof *(loaded->lists) * (ret - maxlen));
-        maxlen = ret;
-      }
-#define LIST loaded->lists[ret-1]
-#define WORDS LIST.words
-      WORDS = realloc(WORDS, ++(LIST.nwords) * sizeof(char *));
-      WORDS[LIST.nwords-1] = strdup(line);
-    }
+#define size (128 * 1024)
+  long r, count = 0;
+  while ((r = read(fd, p, size)) > 0) {
+    for (long i = 0; i < r; i++)
+      count += !*p++;
   }
-  free(line);
 
-  loaded->maxlen = maxlen;
-  dictionary = loaded;
+  char **words = malloc(count * sizeof *words);
+  p = dict;
+  for (long i = 0; i < count; i++) {
+    words[i] = p;
+    p += strlen(p) + 1;
+  }
 
+  dictionary.count = count;
+  dictionary.dict = dict;
+  dictionary.words = words;
+
+  close(fd);
   return 0;
 }
 
 
+
 void tabcomplete(void) {
-  if (!dictionary) return;
+  if (!dictionary.words) return;
   /*if (!buffer.pos) return;*/
 
   /*char *word = buffer.data + buffer.pos - 1;*/
@@ -185,7 +184,8 @@ int main() {
   target = stderr;
 
   pthread_t t;
-  pthread_create(&t, 0, get_dictionary, 0);
+  pthread_create(&t, 0, get_dictionary, DICTIONARY);
+  pthread_detach(t);
 
   tcgetattr(0, &oldterm);
   cfmakeraw(&newterm);
